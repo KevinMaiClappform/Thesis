@@ -415,39 +415,84 @@ def dm_pairwise(model_results, alpha=0.05, drop_outliers_q=0.005):
 # ========================================================================= #
 
 
-CACHE_PATH = "backtest_cache.pkl"
+CACHE_PATH     = "backtest_cache.pkl"
+CACHE_PATH_AUG = "backtest_cache_aug.pkl"
+
+BASELINE_MODELS  = ["QRF", "QGB", "GAS", "GARCH"]
+AUGMENTED_MODELS = ["QRF_AUG", "QGB_AUG", "GAS_AUG", "GARCH_AUG"]
+
+
+def _run_one_model(m):
+    """Dispatch a model short-name to its run_all_stocks() output."""
+    print(f"--- Running {m} ---")
+    if m == "QRF":
+        from QRF import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "QGB":
+        from QGB import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "GAS":
+        from GAS import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "GARCH":
+        from GARCH import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "HISTSIM":
+        from HISTSIM import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "EVT":
+        from EVT import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "QRF_AUG":
+        from QRF import run_all_stocks
+        return run_all_stocks(verbose=False, use_realized=True)
+    elif m == "QGB_AUG":
+        from QGB import run_all_stocks
+        return run_all_stocks(verbose=False, use_realized=True)
+    elif m == "GAS_AUG":
+        from GAS_AUG import run_all_stocks
+        return run_all_stocks(verbose=False)
+    elif m == "GARCH_AUG":
+        from GARCH_AUG import run_all_stocks
+        return run_all_stocks(verbose=False)
+    raise ValueError(m)
 
 
 def load_or_compute_results(cache_path=CACHE_PATH, models=None, force=False):
-    """Run the four univariate models and cache the results to disk.
+    """Run the requested univariate models and cache the results to disk.
 
-    Re-running the four `run_all_stocks` takes minutes; subsequent calls
-    load the cached pickle in milliseconds.
+    Per-model checkpointing: each successfully computed model is written
+    to ``<cache_path>.<MODEL>.partial`` immediately after it finishes,
+    so a crash on a later model does not invalidate hours of work on
+    earlier ones. A re-run picks up where the previous run left off.
     """
     if (not force) and os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             return pickle.load(f)
 
     if models is None:
-        models = ["QRF", "QGB", "GAS", "GARCH"]
+        models = BASELINE_MODELS
 
     out = {}
     for m in models:
-        print(f"--- Running {m} ---")
-        if m == "QRF":
-            from QRF import run_all_stocks
-        elif m == "QGB":
-            from QGB import run_all_stocks
-        elif m == "GAS":
-            from GAS import run_all_stocks
-        elif m == "GARCH":
-            from GARCH import run_all_stocks
-        else:
-            raise ValueError(m)
-        out[m] = run_all_stocks(verbose=False)
+        partial = f"{cache_path}.{m}.partial"
+        if (not force) and os.path.exists(partial):
+            print(f"  loading checkpoint {partial}")
+            with open(partial, "rb") as f:
+                out[m] = pickle.load(f)
+            continue
+        out[m] = _run_one_model(m)
+        with open(partial, "wb") as f:
+            pickle.dump(out[m], f)
+        print(f"  checkpoint saved -> {partial}")
 
+    # All models succeeded -> assemble final cache and clean up checkpoints
     with open(cache_path, "wb") as f:
         pickle.dump(out, f)
+    for m in models:
+        partial = f"{cache_path}.{m}.partial"
+        if os.path.exists(partial):
+            os.remove(partial)
     return out
 
 
@@ -474,7 +519,18 @@ def run_full_backtest(alphas=(0.05, 0.01), models=None, cache_path=CACHE_PATH,
 
 
 if __name__ == "__main__":
-    single, dm_per_stock, dm_pooled = run_full_backtest()
+    import sys
+    aug = "--aug" in sys.argv
+    cache = CACHE_PATH_AUG if aug else CACHE_PATH
+    models = AUGMENTED_MODELS if aug else BASELINE_MODELS
+
+    print(f"=== BACKTEST: {'augmented' if aug else 'baseline'} mode ===")
+    print(f"  cache : {cache}")
+    print(f"  models: {models}")
+
+    single, dm_per_stock, dm_pooled = run_full_backtest(
+        models=models, cache_path=cache,
+    )
 
     print("\n========== SINGLE-MODEL COVERAGE TESTS ==========")
     cols = ["model", "stock", "alpha", "hit_rate",

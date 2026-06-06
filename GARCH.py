@@ -155,4 +155,6 @@ def run_all_stocks(files=None, data_dir="data", verbose=True):
 
 
 if __name__ == "__main__":
-    run_all_stocks()
+    from output import report
+    results = run_all_stocks()
+    report(results, model_name="GARCH")
