@@ -30,6 +30,17 @@ Thumbs.db
 !exampleQGB.jpg
 !exampleGAS.jpg
 !exampleHYBRID.png
+output/
+
+# Cached model results, backups and run logs (regenerable)
+*.pkl
+*.pkl.*
+*.bak
+*_log.txt
+backtest_output.txt
+
+# Intraday/realized data (not used in the baseline analysis)
+data_intraday/
 
 # LaTeX build artefacts (if compiling locally)
 *.aux

@@ -313,8 +313,8 @@ def run_all_pairs(reference_files=None, system_file="SPY.csv",
     lex-best DataFrame."""
     if reference_files is None:
         reference_files = [
-            "ALPHABET.csv", "ASML.csv", "CITIGROUP.csv", "GENERALDYNAMICS.csv",
-            "JPM.csv", "NVIDIA.csv", "PEPSICO.csv", "QQQ.csv", "UNILEVER.csv",
+            "MICROSOFT.csv", "ASML.csv", "CITIGROUP.csv", "GENERALDYNAMICS.csv",
+            "JPM.csv", "NVIDIA.csv", "PEPSICO.csv", "QQQ.csv", "DIAGEO.csv",
         ]
 
     sys_path = os.path.join(data_dir, system_file) if data_dir else system_file
@@ -354,4 +354,9 @@ def run_all_pairs(reference_files=None, system_file="SPY.csv",
 
 
 if __name__ == "__main__":
-    run_all_pairs()
+    from output_covar import report
+    cocaviar_all, cocaviar_best, cocaviar_results = run_all_pairs()
+    # show_var=False: plot only the CoVaR line. The VaR is the conditioning
+    # device in the two-step (VaR, CoVaR) estimator, not the focal object.
+    report(cocaviar_results, model_name="CoCAViaR", best_specs=cocaviar_best,
+           show_var=False)

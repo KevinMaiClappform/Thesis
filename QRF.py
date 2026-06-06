@@ -19,7 +19,8 @@ import pandas as pd
 
 from quantile_forest import RandomForestQuantileRegressor
 
-from features import make_lag_features, load_returns, DEFAULT_FILES
+from features import (make_lag_features, make_lag_features_realized,
+                      load_returns, DEFAULT_FILES)
 from losses import fz_loss
 
 
@@ -44,8 +45,17 @@ def _fit_qrf(X, y):
 
 def _qrf_var_es(model, X):
     """Predict (VaR_1%, VaR_5%, Median, ES_1%, ES_5%) for every row of X.
-    ES is computed as the mean of conditional quantiles in (0, alpha]
-    and is clamped to be at most as large as VaR (i.e. at least as extreme)."""
+
+    The Expected Shortfall at level alpha is computed as the simple average
+    of the conditional quantiles on a grid in (0, alpha], following
+    Patton-Ziegel-Chen (2019). No post-hoc clamp such as ES <= VaR is
+    imposed: the forecasts are the raw output of the Meinshausen (2006)
+    QRF combined with Patton's averaging rule. Because quantile_forest
+    produces monotone conditional quantiles within a single fitted forest,
+    the constructed ES is in practice already at least as extreme as the
+    corresponding VaR, but this is a property of the model rather than
+    something enforced ex post.
+    """
     q = model.predict(X, quantiles=list(_ALL_QS))
     qmap = {qq: q[:, i] for i, qq in enumerate(_ALL_QS)}
 
@@ -55,14 +65,13 @@ def _qrf_var_es(model, X):
     es_1 = np.mean([qmap[qq] for qq in ES_GRID_1], axis=0)
     es_5 = np.mean([qmap[qq] for qq in ES_GRID_5], axis=0)
 
-    es_1 = np.minimum(es_1, var_1)
-    es_5 = np.minimum(es_5, var_5)
-
     return {"VaR_1%": var_1, "VaR_5%": var_5, "Median": median,
             "ES_1%": es_1, "ES_5%": es_5}
 
 
-def rolling_qrf(df, window_size=500, refit_every=100):
+def rolling_qrf(df, window_size=500, refit_every=100,
+                use_realized=False, asset_name=None,
+                intraday_dir="data_intraday"):
     """
     Dynamic (recursive) Quantile Random Forest for VaR and ES.
 
@@ -84,18 +93,37 @@ def rolling_qrf(df, window_size=500, refit_every=100):
         Rolling training window length, default 500.
     refit_every : int
         Refit period in days, default 100.
+    use_realized : bool
+        If True, augment the daily feature set with lagged realized
+        measures (RV, BV, RR) merged from ``<intraday_dir>/<asset_name>_realized.csv``.
+        The effective sample is then restricted to the dates where intraday
+        data is available (typically 2020-2025).
+    asset_name : str, optional
+        Thesis short-name of the asset; required when ``use_realized=True``.
+    intraday_dir : str
+        Folder containing the realized CSVs; defaults to ``data_intraday``.
 
     Returns
     -------
     pandas.DataFrame
         Columns: Date, Actual, VaR_1%, VaR_5%, Median, ES_1%, ES_5%.
     """
-    df = make_lag_features(df, n_lags=5)
-
-    base_cols = [
-        "lag_1", "lag_2", "lag_3", "lag_4", "lag_5",
-        "rolling_vol_5", "rolling_vol_22",
-    ]
+    if use_realized:
+        if asset_name is None:
+            raise ValueError("asset_name is required when use_realized=True")
+        df = make_lag_features_realized(df, asset_name=asset_name,
+                                        n_lags=5, intraday_dir=intraday_dir)
+        base_cols = [
+            "lag_1", "lag_2", "lag_3", "lag_4", "lag_5",
+            "rolling_vol_5", "rolling_vol_22",
+            "lag_RV_5min", "lag_BV_5min", "lag_RR_5min",
+        ]
+    else:
+        df = make_lag_features(df, n_lags=5)
+        base_cols = [
+            "lag_1", "lag_2", "lag_3", "lag_4", "lag_5",
+            "rolling_vol_5", "rolling_vol_22",
+        ]
     X_base = df[base_cols].values
     y = df["DlyRet"].values
     dates = df["DlyCalDt"].values
@@ -158,8 +186,12 @@ def rolling_qrf(df, window_size=500, refit_every=100):
     return pd.DataFrame(results)
 
 
-def run_all_stocks(files=None, data_dir="data", verbose=True):
+def run_all_stocks(files=None, data_dir="data", verbose=True,
+                   use_realized=False, intraday_dir="data_intraday"):
     """Run rolling_qrf over a list of CSVs and attach FZ losses.
+
+    When ``use_realized=True`` the realized-augmented variant is used and
+    the effective sample is restricted to the 2020-2025 intraday window.
 
     Returns dict {stock_name: forecast_dataframe_with_FZ_columns}.
     """
@@ -168,14 +200,16 @@ def run_all_stocks(files=None, data_dir="data", verbose=True):
 
     out = {}
     for f in files:
+        stock = f.replace(".csv", "")
         if verbose:
-            print(f"Running QRF for {f}...")
+            tag = " (+realized)" if use_realized else ""
+            print(f"Running QRF{tag} for {stock}...")
         path = os.path.join(data_dir, f) if data_dir else f
         df = load_returns(path)
-        res = rolling_qrf(df)
+        res = rolling_qrf(df, use_realized=use_realized, asset_name=stock,
+                          intraday_dir=intraday_dir)
         res["FZ_5%"] = fz_loss(res["Actual"].values, res["VaR_5%"].values, res["ES_5%"].values, alpha=0.05)
         res["FZ_1%"] = fz_loss(res["Actual"].values, res["VaR_1%"].values, res["ES_1%"].values, alpha=0.01)
-        stock = f.replace(".csv", "")
         out[stock] = res
         if verbose:
             v5 = (res["Actual"] < res["VaR_5%"]).mean()
@@ -186,4 +220,9 @@ def run_all_stocks(files=None, data_dir="data", verbose=True):
 
 
 if __name__ == "__main__":
-    run_all_stocks()
+    import sys
+    from output import report
+    use_realized = "--realized" in sys.argv
+    model_name = "QRF_AUG" if use_realized else "QRF"
+    results = run_all_stocks(use_realized=use_realized)
+    report(results, model_name=model_name)

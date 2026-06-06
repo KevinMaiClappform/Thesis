@@ -1,8 +1,15 @@
+# Core scientific stack
 pandas>=2.0
 numpy>=1.24
 matplotlib>=3.7
 scipy>=1.10
-arch>=6.0
-lightgbm>=4.0
-quantile-forest>=1.3
 statsmodels>=0.14
+
+# Model-specific
+arch>=6.0                # GARCH(1,1)-t and DCC-GARCH univariate fits
+lightgbm>=4.0            # Quantile Gradient Boosting (QGB.py)
+quantile-forest>=1.3     # Quantile Random Forest (QRF.py)
+
+# Intraday TAQ download (INTRADAY_TAQ.ipynb / future .py)
+wrds>=3.1                # WRDS PostgreSQL client; pulls psycopg2-binary
+tqdm>=4.60               # Progress bar for the rolling-day loop
