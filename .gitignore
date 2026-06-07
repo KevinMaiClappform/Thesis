@@ -24,13 +24,17 @@ env/
 # OS
 Thumbs.db
 
-# Generated outputs
+# Generated outputs: keep the figures (PNG) and the small summary/parameter
+# tables (CSV) in the repo as a record of the results, but exclude the large
+# raw per-observation forecast dumps and the multi-hundred-MB stdout logs.
 *.png
 !exampleQRF.jpg
 !exampleQGB.jpg
 !exampleGAS.jpg
 !exampleHYBRID.png
-output/
+!output/*.png
+output/*_forecasts.csv
+output/*stdout*.txt
 
 # Cached model results, backups and run logs (regenerable)
 *.pkl
