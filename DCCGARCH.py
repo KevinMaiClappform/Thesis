@@ -292,6 +292,54 @@ def rolling_dcc_covar(X_returns, Y_returns, dates,
 
 
 # =======================================================================
+# 4b. Full-sample parameter estimates (for the results table)
+# =======================================================================
+
+
+def dcc_param_table(reference_files=None, system_file="SPY.csv",
+                    data_dir="data", verbose=True):
+    """Full-sample DCC-GARCH parameter estimates per (reference, SPY) pair.
+
+    Reports the distinctive correlation parameters: the unconditional
+    correlation ``rho_bar`` (the variance-targeting intercept, fixed at the
+    sample correlation of the standardised residuals, Aielli 2013) and the
+    DCC(1,1) dynamics ``a`` and ``b`` with their persistence ``a + b``. Each
+    pair additionally uses univariate GARCH(1,1)-Gaussian fits whose volatility
+    dynamics mirror the GARCH-t benchmark; those are not re-tabulated here.
+
+    Returns a pandas DataFrame with one row per reference asset.
+    """
+    if reference_files is None:
+        reference_files = [f for f in DEFAULT_FILES if f != system_file]
+
+    sys_path = os.path.join(data_dir, system_file) if data_dir else system_file
+    sys_df = load_returns(sys_path).rename(columns={"DlyRet": "Ret_Y"})
+
+    rows = []
+    for f in reference_files:
+        ref_name = f.replace(".csv", "")
+        if verbose:
+            print(f"Fitting DCC-GARCH (full sample) for {ref_name} | "
+                  f"{system_file.replace('.csv', '')} ...")
+        ref_path = os.path.join(data_dir, f) if data_dir else f
+        ref_df = load_returns(ref_path).rename(columns={"DlyRet": "Ret_X"})
+        pair = ref_df.merge(sys_df, on="DlyCalDt", how="inner").reset_index(drop=True)
+
+        _, z_x, _ = _fit_univariate_garch(pair["Ret_X"].values)
+        _, z_y, _ = _fit_univariate_garch(pair["Ret_Y"].values)
+        a_dcc, b_dcc, rho_bar, _ = _fit_dcc_bivariate(z_x, z_y)
+
+        rows.append({
+            "Reference": ref_name,
+            "rho_bar": float(rho_bar),
+            "a": float(a_dcc),
+            "b": float(b_dcc),
+            "ab": float(a_dcc + b_dcc),
+        })
+    return pd.DataFrame(rows)
+
+
+# =======================================================================
 # 5. Driver -- pair-wise, matching COCAVIAR.py output shape
 # =======================================================================
 

@@ -306,6 +306,71 @@ def lex_select(spec_results):
     return min(candidates, key=lambda s: spec_results[s]["avg_covar"])
 
 
+def _unpack_as_signs(raw):
+    """Unpack an AS-signs raw parameter vector into natural-scale coefficients.
+
+    Reparameterisation (Section 4.7): omega = exp(.), each loading A = exp(.)
+    (so non-negative), persistence B = sigmoid(.) in (0, 1). The four loadings
+    correspond to the positive/negative components of the reference loss X and
+    the system loss Y: (A_Xp, A_Xn, A_Yp, A_Yn).
+    """
+    return {
+        "omega": float(np.exp(raw[0])),
+        "A_Xp":  float(np.exp(raw[1])),
+        "A_Xn":  float(np.exp(raw[2])),
+        "A_Yp":  float(np.exp(raw[3])),
+        "A_Yn":  float(np.exp(raw[4])),
+        "B":     float(_sig(raw[5])),
+    }
+
+
+def assigns_param_table(reference_files=None, system_file="SPY.csv",
+                        data_dir="data", beta=0.95, alpha=0.95, verbose=True):
+    """Full-sample AS-signs CoCAViaR parameter estimates per (reference, SPY)
+    pair, for both the VaR (v) and CoVaR (c) recursions, in natural scale.
+
+    AS-signs is the most general (richest) specification -- it nests the SAV
+    and AS-pos forms -- and is the lex-best spec for the majority of pairs, so
+    reporting its coefficients across the whole cross-section gives a uniform,
+    comparable parameter table, analogous to the GAS and GARCH parameter
+    tables. Returns a pandas DataFrame with one row per reference asset.
+    """
+    if reference_files is None:
+        reference_files = [
+            "MICROSOFT.csv", "ASML.csv", "CITIGROUP.csv", "GENERALDYNAMICS.csv",
+            "JPM.csv", "NVIDIA.csv", "PEPSICO.csv", "QQQ.csv", "DIAGEO.csv",
+        ]
+    sys_path = os.path.join(data_dir, system_file) if data_dir else system_file
+    sys_df = load_returns(sys_path).rename(columns={"DlyRet": "Ret_Y"})
+
+    rows = []
+    for ref_file in reference_files:
+        ref_name = ref_file.replace(".csv", "")
+        if verbose:
+            print(f"Fitting AS-signs (full sample) for {ref_name} | "
+                  f"{system_file.replace('.csv', '')} ...")
+        ref_path = os.path.join(data_dir, ref_file) if data_dir else ref_file
+        ref_df = load_returns(ref_path).rename(columns={"DlyRet": "Ret_X"})
+        pair = ref_df.merge(sys_df, on="DlyCalDt", how="inner").reset_index(drop=True)
+        X_loss = -pair["Ret_X"].values
+        Y_loss = -pair["Ret_Y"].values
+
+        theta_v = _fit_v("AS-signs", X_loss, Y_loss, beta=beta).x
+        v_hat = filter_v_as_signs(theta_v, X_loss, Y_loss)
+        theta_c = _fit_c("AS-signs", v_hat, X_loss, Y_loss, alpha=alpha).x
+
+        pv = _unpack_as_signs(theta_v)
+        pc = _unpack_as_signs(theta_c)
+        rows.append({
+            "Reference": ref_name,
+            "omega_v": pv["omega"], "AXp_v": pv["A_Xp"], "AXn_v": pv["A_Xn"],
+            "AYp_v": pv["A_Yp"], "AYn_v": pv["A_Yn"], "B_v": pv["B"],
+            "omega_c": pc["omega"], "AXp_c": pc["A_Xp"], "AXn_c": pc["A_Xn"],
+            "AYp_c": pc["A_Yp"], "AYn_c": pc["A_Yn"], "B_c": pc["B"],
+        })
+    return pd.DataFrame(rows)
+
+
 def run_all_pairs(reference_files=None, system_file="SPY.csv",
                   data_dir="data", verbose=True):
     """Run all six specs for each (reference, system) pair. Returns dicts
