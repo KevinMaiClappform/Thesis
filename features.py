@@ -46,7 +46,13 @@ def make_lag_features(df, n_lags=5):
     df["rolling_vol_5"] = df["DlyRet"].rolling(5).std()
     df["rolling_vol_22"] = df["DlyRet"].rolling(22).std()
 
-    df = df.dropna().reset_index(drop=True)
+    # Drop rows with NaN only in the feature columns and the target, NOT in
+    # unrelated CSV columns (e.g. `openprc`, which is missing for the early
+    # part of some series such as DIAGEO and would otherwise silently delete
+    # ~1000 valid observations).
+    feature_cols = [f"lag_{lag}" for lag in range(1, n_lags + 1)] + \
+                   ["rolling_vol_5", "rolling_vol_22", "DlyRet"]
+    df = df.dropna(subset=feature_cols).reset_index(drop=True)
 
     return df
 

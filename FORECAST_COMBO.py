@@ -76,11 +76,17 @@ def optimise_weights(var_mat, es_mat, y, alpha):
     """
     K = var_mat.shape[1]
 
-    def objective(w_raw):
+    def _weights(eta_free):
         # Softmax reparameterisation guarantees w in the simplex without
-        # constrained optimisation. Subtract max for numerical stability.
-        w = np.exp(w_raw - np.max(w_raw))
-        w = w / w.sum()
+        # constrained optimisation. The softmax is invariant to adding a
+        # common constant to every eta, so the first coefficient is fixed at
+        # eta_1 = 0 for identification and only the remaining K-1 are free.
+        eta = np.concatenate([[0.0], eta_free])
+        w = np.exp(eta - np.max(eta))
+        return w / w.sum()
+
+    def objective(eta_free):
+        w = _weights(eta_free)
         v = var_mat @ w
         e = es_mat @ w
         loss = fz_loss(y, v, e, alpha=alpha)
@@ -88,14 +94,12 @@ def optimise_weights(var_mat, es_mat, y, alpha):
             return 1e10
         return float(np.mean(loss))
 
-    # Initialise from equal weights.
-    w0 = np.zeros(K)
+    # Initialise from equal weights (eta_free = 0 -> uniform after softmax).
+    w0 = np.zeros(K - 1)
     res = minimize(objective, w0, method="Nelder-Mead",
                    options={"maxiter": 2000, "xatol": 1e-6, "disp": False})
 
-    w = np.exp(res.x - np.max(res.x))
-    w = w / w.sum()
-    return w
+    return _weights(res.x)
 
 
 # ========================================================================= #
